@@ -1,6 +1,5 @@
 const { createScopedThreejs } = require('threejs-miniprogram');
 
-const PLAYER_MODEL_URL = 'https://example.com/assets/player.glb';
 const GRID_SIZE = 50;
 const GRID_SPACING = 1.7;
 const HEIGHT_UNIT = 1.4;
@@ -12,6 +11,7 @@ const PLAYER_MOVE_HEIGHT_BONUS = 90;
 const MECHANISM_ROTATION_DURATION = 760;
 const BRIDGE_ANIMATION_DURATION = 420;
 const BLOCKED_FEEDBACK_DURATION = 260;
+const LEVEL_CLEAR_DURATION = 3200;
 const CAMERA_LERP = 0.08;
 const CAMERA_OFFSET = { x: 9.5, y: 10.8, z: 9.5 };
 
@@ -32,6 +32,7 @@ const COLORS = {
   playerPrimary: 0xf7f7ff,
   playerSecondary: 0xff6b6b,
   playerAccent: 0x94d2bd,
+  playerMetal: 0xd9dce7,
   shadow: 0x1b1e2c,
 };
 
@@ -110,15 +111,6 @@ const level = {
   ],
 };
 
-const GLTF_LOADER_CANDIDATES = [
-  'three/examples/js/loaders/GLTFLoader',
-  'three/examples/jsm/loaders/GLTFLoader',
-  'threejs-miniprogram/examples/js/loaders/GLTFLoader',
-  'threejs-miniprogram/examples/jsm/loaders/GLTFLoader',
-];
-
-let cachedGLTFLoaderClass = null;
-
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -177,64 +169,6 @@ function surfaceY(logicalY) {
   return logicalY * HEIGHT_UNIT;
 }
 
-function getScopeObject() {
-  if (typeof GameGlobal !== 'undefined') {
-    return GameGlobal;
-  }
-  if (typeof globalThis !== 'undefined') {
-    return globalThis;
-  }
-  return {};
-}
-
-function tryRequireGLTFModule(path) {
-  try {
-    return require(path);
-  } catch (error) {
-    return null;
-  }
-}
-
-function resolveGLTFLoaderClass(THREE) {
-  if (cachedGLTFLoaderClass) {
-    return cachedGLTFLoaderClass;
-  }
-
-  const scope = getScopeObject();
-  scope.THREE = THREE;
-
-  let index = 0;
-  while (index < GLTF_LOADER_CANDIDATES.length) {
-    const moduleValue = tryRequireGLTFModule(GLTF_LOADER_CANDIDATES[index]);
-    if (moduleValue) {
-      if (moduleValue.GLTFLoader) {
-        cachedGLTFLoaderClass = moduleValue.GLTFLoader;
-        return cachedGLTFLoaderClass;
-      }
-      if (moduleValue.default) {
-        cachedGLTFLoaderClass = moduleValue.default;
-        return cachedGLTFLoaderClass;
-      }
-      if (typeof moduleValue === 'function') {
-        cachedGLTFLoaderClass = moduleValue;
-        return cachedGLTFLoaderClass;
-      }
-    }
-    if (scope.THREE && scope.THREE.GLTFLoader) {
-      cachedGLTFLoaderClass = scope.THREE.GLTFLoader;
-      return cachedGLTFLoaderClass;
-    }
-    index += 1;
-  }
-
-  if (scope.THREE && scope.THREE.GLTFLoader) {
-    cachedGLTFLoaderClass = scope.THREE.GLTFLoader;
-    return cachedGLTFLoaderClass;
-  }
-
-  return null;
-}
-
 function heuristic(blockA, blockB) {
   return (
     Math.abs(blockA.x - blockB.x) +
@@ -261,9 +195,10 @@ Page({
     this.cameraDesired = null;
     this.interactiveRoots = [];
     this.sceneObjects = [];
-    this.blockMeshes = {};
     this.blockDataMap = {};
     this.positionMap = {};
+    this.blockMeshes = {};
+    this.blockActiveState = {};
     this.mechanismMeshes = {};
     this.mechanismStates = {};
     this.activeLinks = {};
@@ -271,16 +206,15 @@ Page({
     this.activeMove = null;
     this.pendingPath = [];
     this.activeMechanismAnimations = [];
+    this.levelClearState = null;
     this.blockedUntil = 0;
     this.playerBlockId = level.startBlockId;
     this.playerContainer = null;
     this.playerAvatarRoot = null;
     this.fallbackPlayer = null;
-    this.playerMixer = null;
-    this.playerUseFallback = true;
     this.timeStart = Date.now();
 
-    this.prepareLevelMaps();
+    this.prepareLevelData();
     this.initCanvas();
   },
 
@@ -295,13 +229,60 @@ Page({
     }
   },
 
-  prepareLevelMaps() {
+  prepareLevelData() {
     let i = 0;
     while (i < level.blocks.length) {
-      const block = level.blocks[i];
-      this.blockDataMap[block.id] = block;
-      this.positionMap[makePositionKey(block.x, block.z)] = block;
+      const block = Object.assign({}, level.blocks[i], {
+        isBridge: false,
+      });
+      this.registerBlock(block);
       i += 1;
+    }
+
+    i = 0;
+    while (i < level.mechanisms.length) {
+      this.createRuntimeBridgeNodes(level.mechanisms[i]);
+      i += 1;
+    }
+  },
+
+  registerBlock(block) {
+    this.blockDataMap[block.id] = block;
+    this.positionMap[makePositionKey(block.x, block.z)] = block;
+    this.blockActiveState[block.id] = !block.isBridge;
+  },
+
+  createRuntimeBridgeNodes(mechanism) {
+    let linkIndex = 0;
+    while (linkIndex < mechanism.links.length) {
+      const pair = mechanism.links[linkIndex];
+      const fromBlock = this.blockDataMap[pair[0]];
+      const toBlock = this.blockDataMap[pair[1]];
+      const dx = toBlock.x - fromBlock.x;
+      const dz = toBlock.z - fromBlock.z;
+      const stepX = dx === 0 ? 0 : dx / Math.abs(dx);
+      const stepZ = dz === 0 ? 0 : dz / Math.abs(dz);
+      const length = Math.abs(dx) + Math.abs(dz);
+      let step = 1;
+
+      while (step < length) {
+        const x = fromBlock.x + stepX * step;
+        const z = fromBlock.z + stepZ * step;
+        const y = lerp(fromBlock.y, toBlock.y, step / length);
+        const block = {
+          id: `${mechanism.id}-bridge-${linkIndex}-${step}`,
+          x,
+          y,
+          z,
+          type: 5,
+          isBridge: true,
+          mechanismId: mechanism.id,
+        };
+        this.registerBlock(block);
+        step += 1;
+      }
+
+      linkIndex += 1;
     }
   },
 
@@ -361,7 +342,6 @@ Page({
       this.createPlayerContainer();
       this.placePlayerAtBlock(this.playerBlockId);
       this.updateCamera(true);
-      this.tryLoadPlayerModel();
       this.renderLoop();
     });
   },
@@ -431,24 +411,16 @@ Page({
   },
 
   buildLevelGeometry() {
-    this.interactiveRoots = [];
-    this.blockMeshes = {};
-    this.mechanismMeshes = {};
-    this.mechanismStates = {};
-    this.activeLinks = {};
-    this.bridgeStates = [];
-    this.pendingPath = [];
-    this.activeMove = null;
-    this.activeMechanismAnimations = [];
-
+    const ids = Object.keys(this.blockDataMap);
     let i = 0;
-    while (i < level.blocks.length) {
-      const block = level.blocks[i];
-      const blockGroup = this.createBlockGroup(block);
-      this.blockMeshes[block.id] = blockGroup;
-      this.interactiveRoots.push(blockGroup);
-      this.scene.add(blockGroup);
-      this.sceneObjects.push(blockGroup);
+    while (i < ids.length) {
+      const block = this.blockDataMap[ids[i]];
+      const group = this.createBlockGroup(block);
+      this.blockMeshes[block.id] = group;
+      this.interactiveRoots.push(group);
+      this.scene.add(group);
+      this.sceneObjects.push(group);
+      this.setBlockVisualState(block.id, this.blockActiveState[block.id], true);
       i += 1;
     }
 
@@ -502,11 +474,13 @@ Page({
         new THREE.MeshLambertMaterial({ color: COLORS.stairAccent })
       );
       stepA.position.set(0, topY + BLOCK_THICKNESS / 2 + 0.12, -0.24);
+
       const stepB = new THREE.Mesh(
         new THREE.BoxGeometry(BLOCK_SIZE * 0.7, 0.12, BLOCK_SIZE * 0.24),
         new THREE.MeshLambertMaterial({ color: COLORS.stairAccent })
       );
       stepB.position.set(0, topY + BLOCK_THICKNESS / 2 + 0.22, 0.04);
+
       group.add(stepA);
       group.add(stepB);
     }
@@ -538,14 +512,26 @@ Page({
       group.add(beacon);
     }
 
+    if (block.type === 5) {
+      const railLeft = new THREE.Mesh(
+        new THREE.BoxGeometry(0.08, 0.18, BLOCK_SIZE * 0.88),
+        new THREE.MeshLambertMaterial({ color: COLORS.bridgeAccent })
+      );
+      railLeft.position.set(-0.34, topY + BLOCK_THICKNESS / 2 + 0.1, 0);
+      const railRight = railLeft.clone();
+      railRight.position.x = 0.34;
+      group.add(railLeft);
+      group.add(railRight);
+    }
+
     group.userData = {
       blockId: block.id,
       type: block.type,
       mechanismId: block.mechanismId || '',
+      isBridge: !!block.isBridge,
     };
 
     this.assignUserDataRecursive(group, group);
-
     return group;
   },
 
@@ -570,6 +556,9 @@ Page({
     if (block.type === 4) {
       return COLORS.stair;
     }
+    if (block.type === 5) {
+      return COLORS.bridge;
+    }
     return COLORS.path;
   },
 
@@ -583,36 +572,60 @@ Page({
     if (block.type === 4) {
       return COLORS.stairAccent;
     }
+    if (block.type === 5) {
+      return COLORS.bridgeAccent;
+    }
     return COLORS.pathAccent;
   },
 
   createBridgeStates(mechanism) {
     const THREE = this.THREE;
     const states = [];
-    let i = 0;
-    while (i < mechanism.links.length) {
-      const pair = mechanism.links[i];
+    let linkIndex = 0;
+
+    while (linkIndex < mechanism.links.length) {
+      const pair = mechanism.links[linkIndex];
       const fromBlock = this.blockDataMap[pair[0]];
       const toBlock = this.blockDataMap[pair[1]];
+      const dx = toBlock.x - fromBlock.x;
+      const dz = toBlock.z - fromBlock.z;
+      const length = Math.abs(dx) + Math.abs(dz);
+      const stepX = dx === 0 ? 0 : dx / Math.abs(dx);
+      const stepZ = dz === 0 ? 0 : dz / Math.abs(dz);
+      const nodeIds = [];
+      const nodeGroups = [];
+
+      let step = 1;
+      while (step < length) {
+        const nodeId = `${mechanism.id}-bridge-${linkIndex}-${step}`;
+        nodeIds.push(nodeId);
+        nodeGroups.push(this.blockMeshes[nodeId]);
+        step += 1;
+      }
+
       const bridgeGroup = new THREE.Group();
       const fromPosition = this.getWorldPositionForBlock(fromBlock);
       const toPosition = this.getWorldPositionForBlock(toBlock);
-      const dx = toPosition.x - fromPosition.x;
-      const dz = toPosition.z - fromPosition.z;
-      const length = Math.sqrt(dx * dx + dz * dz);
-      const y = Math.min(fromPosition.y, toPosition.y) + 0.1;
+      const wxdx = toPosition.x - fromPosition.x;
+      const wzdz = toPosition.z - fromPosition.z;
+      const beamLength = Math.sqrt(wxdx * wxdx + wzdz * wzdz);
+      const beamY = Math.min(fromPosition.y, toPosition.y) + 0.1;
 
-      bridgeGroup.position.set((fromPosition.x + toPosition.x) / 2, y, (fromPosition.z + toPosition.z) / 2);
-      bridgeGroup.rotation.y = Math.atan2(dx, dz);
+      bridgeGroup.position.set(
+        (fromPosition.x + toPosition.x) / 2,
+        beamY,
+        (fromPosition.z + toPosition.z) / 2
+      );
+      bridgeGroup.rotation.y = Math.atan2(wxdx, wzdz);
 
       const beam = new THREE.Mesh(
-        new THREE.BoxGeometry(0.72, 0.18, length + 0.08),
+        new THREE.BoxGeometry(0.72, 0.18, beamLength + 0.08),
         new THREE.MeshLambertMaterial({ color: COLORS.bridge })
       );
       beam.scale.z = 0.001;
 
       const rail = new THREE.Mesh(
-        new THREE.BoxGeometry(0.18, 0.08, length + 0.02),
+        new THREE.BoxGeometry(0.18, 0.08, beamLength + 0.02),
         new THREE.MeshLambertMaterial({ color: COLORS.bridgeAccent })
       );
       rail.position.y = 0.16;
@@ -620,28 +633,32 @@ Page({
 
       bridgeGroup.add(beam);
       bridgeGroup.add(rail);
-      bridgeGroup.visible = true;
+      bridgeGroup.visible = false;
 
       this.scene.add(bridgeGroup);
       this.sceneObjects.push(bridgeGroup);
 
       states.push({
-        id: `${mechanism.id}:${i}`,
+        id: `${mechanism.id}:${linkIndex}`,
         mechanismId: mechanism.id,
         fromId: fromBlock.id,
         toId: toBlock.id,
+        nodeIds,
+        nodeGroups,
         group: bridgeGroup,
         beam,
         rail,
         currentScale: 0.001,
-        targetScale: 0.001,
         startScale: 0.001,
-        animating: false,
+        targetScale: 0.001,
         startTime: 0,
         duration: BRIDGE_ANIMATION_DURATION,
+        animating: false,
       });
-      i += 1;
+
+      linkIndex += 1;
     }
+
     return states;
   },
 
@@ -655,8 +672,7 @@ Page({
     this.sceneObjects.push(this.playerContainer);
 
     this.fallbackPlayer = this.createFallbackPlayer();
-    this.playerAvatarRoot.add(this.fallbackPlayer);
-    this.playerUseFallback = true;
+    this.playerAvatarRoot.add(this.fallbackPlayer.root);
   },
 
   createFallbackPlayer() {
@@ -668,6 +684,12 @@ Page({
       new THREE.MeshLambertMaterial({ color: COLORS.playerSecondary })
     );
     body.position.y = 0.42;
+
+    const chest = new THREE.Mesh(
+      new THREE.BoxGeometry(0.24, 0.18, 0.16),
+      new THREE.MeshLambertMaterial({ color: COLORS.playerMetal })
+    );
+    chest.position.set(0, 0.46, 0.14);
 
     const head = new THREE.Mesh(
       new THREE.SphereGeometry(0.22, 16, 16),
@@ -681,6 +703,24 @@ Page({
     );
     backpack.position.set(0, 0.42, -0.18);
 
+    const armLeft = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.06, 0.34, 12),
+      new THREE.MeshLambertMaterial({ color: COLORS.playerPrimary })
+    );
+    armLeft.position.set(-0.22, 0.48, 0);
+
+    const armRight = armLeft.clone();
+    armRight.position.x = 0.22;
+
+    const legLeft = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.055, 0.065, 0.34, 12),
+      new THREE.MeshLambertMaterial({ color: COLORS.playerMetal })
+    );
+    legLeft.position.set(-0.09, 0.12, 0);
+
+    const legRight = legLeft.clone();
+    legRight.position.x = 0.09;
+
     const eyeLeft = new THREE.Mesh(
       new THREE.SphereGeometry(0.03, 10, 10),
       new THREE.MeshLambertMaterial({ color: 0x212529 })
@@ -691,90 +731,27 @@ Page({
     eyeRight.position.x = 0.06;
 
     root.add(body);
+    root.add(chest);
     root.add(head);
     root.add(backpack);
+    root.add(armLeft);
+    root.add(armRight);
+    root.add(legLeft);
+    root.add(legRight);
     root.add(eyeLeft);
     root.add(eyeRight);
 
-    root.userData = {
+    return {
+      root,
       body,
+      chest,
       head,
       backpack,
+      armLeft,
+      armRight,
+      legLeft,
+      legRight,
     };
-
-    return root;
-  },
-
-  tryLoadPlayerModel() {
-    const THREE = this.THREE;
-    const GLTFLoaderClass = resolveGLTFLoaderClass(THREE);
-    if (!GLTFLoaderClass) {
-      console.warn('GLTFLoader is unavailable, using fallback player.');
-      return;
-    }
-
-    const loader = new GLTFLoaderClass();
-
-    wx.downloadFile({
-      url: PLAYER_MODEL_URL,
-      success: (res) => {
-        if (!res || res.statusCode < 200 || res.statusCode >= 300 || !res.tempFilePath) {
-          console.warn('GLB download failed, using fallback player.', res && res.statusCode);
-          return;
-        }
-
-        loader.load(
-          res.tempFilePath,
-          (gltf) => {
-            this.attachLoadedPlayerModel(gltf);
-          },
-          undefined,
-          (error) => {
-            console.warn('GLB parse failed, using fallback player.', error);
-          }
-        );
-      },
-      fail: (error) => {
-        console.warn('GLB download request failed, using fallback player.', error);
-      },
-    });
-  },
-
-  attachLoadedPlayerModel(gltf) {
-    if (!gltf || !gltf.scene || !this.playerAvatarRoot || this.isUnloading) {
-      return;
-    }
-
-    while (this.playerAvatarRoot.children.length) {
-      this.playerAvatarRoot.remove(this.playerAvatarRoot.children[0]);
-    }
-
-    const model = gltf.scene;
-    const box = new this.THREE.Box3().setFromObject(model);
-    const size = new this.THREE.Vector3();
-    box.getSize(size);
-    const maxSize = Math.max(size.x || 1, size.y || 1, size.z || 1);
-    const scale = 0.92 / maxSize;
-    model.scale.set(scale, scale, scale);
-
-    box.setFromObject(model);
-    const center = new this.THREE.Vector3();
-    box.getCenter(center);
-    model.position.x -= center.x;
-    model.position.z -= center.z;
-    model.position.y -= box.min.y;
-
-    this.playerAvatarRoot.add(model);
-    this.playerUseFallback = false;
-
-    if (gltf.animations && gltf.animations.length) {
-      this.playerMixer = new this.THREE.AnimationMixer(model);
-      let i = 0;
-      while (i < gltf.animations.length) {
-        this.playerMixer.clipAction(gltf.animations[i]).play();
-        i += 1;
-      }
-    }
   },
 
   getWorldPositionForBlock(block) {
@@ -783,6 +760,34 @@ Page({
       y: surfaceY(block.y) + BLOCK_THICKNESS / 2,
       z: worldZ(block.z),
     };
+  },
+
+  setBlockVisualState(blockId, active, immediate) {
+    const group = this.blockMeshes[blockId];
+    if (!group) {
+      return;
+    }
+
+    if (!group.userData.isBridge) {
+      group.visible = true;
+      return;
+    }
+
+    if (active) {
+      group.visible = true;
+      if (immediate) {
+        group.scale.set(1, 1, 1);
+      } else {
+        group.scale.set(1, 1, Math.max(group.scale.z, 0.001));
+      }
+    } else if (immediate) {
+      group.visible = false;
+      group.scale.set(1, 1, 0.001);
+    }
+  },
+
+  isBlockActive(blockId) {
+    return !!this.blockActiveState[blockId];
   },
 
   onTouchStart(event) {
@@ -798,7 +803,13 @@ Page({
   },
 
   processTap(touch) {
-    if (!this.camera || !this.raycaster || this.activeMove || this.activeMechanismAnimations.length) {
+    if (
+      !this.camera ||
+      !this.raycaster ||
+      this.activeMove ||
+      this.activeMechanismAnimations.length ||
+      this.levelClearState
+    ) {
       return;
     }
 
@@ -826,6 +837,10 @@ Page({
     }
 
     const blockId = target.userData.blockId;
+    if (!this.isBlockActive(blockId)) {
+      return;
+    }
+
     const block = this.blockDataMap[blockId];
     if (!block) {
       return;
@@ -836,7 +851,7 @@ Page({
       return;
     }
 
-    if (block.type === 1 || block.type === 3 || block.type === 4) {
+    if (block.type === 1 || block.type === 3 || block.type === 4 || block.type === 5) {
       this.requestMoveToBlock(block.id);
     }
   },
@@ -892,8 +907,7 @@ Page({
       let i = 0;
       while (i < neighbors.length) {
         const neighborId = neighbors[i];
-        const currentScore = gScore[currentId];
-        const tentativeScore = currentScore + this.getTraversalCost(currentId, neighborId);
+        const tentativeScore = gScore[currentId] + this.getTraversalCost(currentId, neighborId);
         if (gScore[neighborId] === undefined || tentativeScore < gScore[neighborId]) {
           cameFrom[neighborId] = currentId;
           gScore[neighborId] = tentativeScore;
@@ -922,8 +936,7 @@ Page({
   getTraversalCost(fromId, toId) {
     const fromBlock = this.blockDataMap[fromId];
     const toBlock = this.blockDataMap[toId];
-    const heightCost = Math.abs(fromBlock.y - toBlock.y);
-    return 1 + heightCost * 0.6;
+    return 1 + Math.abs(fromBlock.y - toBlock.y) * 0.6;
   },
 
   getNeighbors(blockId) {
@@ -940,7 +953,7 @@ Page({
     while (i < directions.length) {
       const direction = directions[i];
       const nextBlock = this.positionMap[makePositionKey(block.x + direction.x, block.z + direction.z)];
-      if (nextBlock && this.canWalkBetween(block, nextBlock)) {
+      if (nextBlock && this.isBlockActive(nextBlock.id) && this.canWalkBetween(block, nextBlock)) {
         neighbors.push(nextBlock.id);
       }
       i += 1;
@@ -985,8 +998,10 @@ Page({
       PLAYER_MOVE_BASE_DURATION +
       Math.abs(nextBlock.y - currentBlock.y) * PLAYER_MOVE_HEIGHT_BONUS;
 
-    const heading = Math.atan2(toPosition.x - fromPosition.x, toPosition.z - fromPosition.z);
-    this.playerContainer.rotation.y = heading;
+    this.playerContainer.rotation.y = Math.atan2(
+      toPosition.x - fromPosition.x,
+      toPosition.z - fromPosition.z
+    );
 
     this.activeMove = {
       blockId: nextId,
@@ -1002,8 +1017,7 @@ Page({
   },
 
   placePlayerAtBlock(blockId) {
-    const block = this.blockDataMap[blockId];
-    const position = this.getWorldPositionForBlock(block);
+    const position = this.getWorldPositionForBlock(this.blockDataMap[blockId]);
     this.playerContainer.position.set(position.x, position.y + 0.18, position.z);
   },
 
@@ -1047,20 +1061,30 @@ Page({
       let j = 0;
       while (j < mechanism.links.length) {
         const pair = mechanism.links[j];
-        if (active) {
+        this.toggleBridgePath(mechanism.id, j, active);
+        if (active && Math.abs(this.blockDataMap[pair[0]].x - this.blockDataMap[pair[1]].x) + Math.abs(this.blockDataMap[pair[0]].z - this.blockDataMap[pair[1]].z) === 1) {
           this.addActiveLink(pair[0], pair[1]);
         }
         j += 1;
       }
       i += 1;
     }
+  },
 
-    i = 0;
+  toggleBridgePath(mechanismId, linkIndex, active) {
+    const prefix = `${mechanismId}:${linkIndex}`;
+    let i = 0;
     while (i < this.bridgeStates.length) {
       const bridgeState = this.bridgeStates[i];
-      const mechanismState = this.mechanismStates[bridgeState.mechanismId];
-      const shouldOpen = mechanismState && mechanismState.rotationState === mechanismState.unlockState;
-      this.setBridgeTarget(bridgeState, shouldOpen ? 1 : 0.001);
+      if (bridgeState.id === prefix) {
+        let nodeIndex = 0;
+        while (nodeIndex < bridgeState.nodeIds.length) {
+          this.blockActiveState[bridgeState.nodeIds[nodeIndex]] = active;
+          this.setBlockVisualState(bridgeState.nodeIds[nodeIndex], active, false);
+          nodeIndex += 1;
+        }
+        this.setBridgeTarget(bridgeState, active ? 1 : 0.001);
+      }
       i += 1;
     }
   },
@@ -1084,6 +1108,14 @@ Page({
     bridgeState.targetScale = targetScale;
     bridgeState.startTime = Date.now();
     bridgeState.animating = true;
+    bridgeState.group.visible = true;
+    let i = 0;
+    while (i < bridgeState.nodeGroups.length) {
+      if (bridgeState.nodeGroups[i]) {
+        bridgeState.nodeGroups[i].visible = true;
+      }
+      i += 1;
+    }
   },
 
   updateBridgeAnimations(now) {
@@ -1099,8 +1131,27 @@ Page({
           bridgeState.animating = false;
         }
       }
-      bridgeState.beam.scale.z = Math.max(0.001, bridgeState.currentScale);
-      bridgeState.rail.scale.z = Math.max(0.001, bridgeState.currentScale);
+
+      const scaleZ = Math.max(0.001, bridgeState.currentScale);
+      bridgeState.beam.scale.z = scaleZ;
+      bridgeState.rail.scale.z = scaleZ;
+
+      let nodeIndex = 0;
+      while (nodeIndex < bridgeState.nodeGroups.length) {
+        const group = bridgeState.nodeGroups[nodeIndex];
+        if (group) {
+          group.scale.set(1, 1, scaleZ);
+          if (!bridgeState.animating && bridgeState.targetScale <= 0.001) {
+            group.visible = false;
+          }
+        }
+        nodeIndex += 1;
+      }
+
+      if (!bridgeState.animating && bridgeState.targetScale <= 0.001) {
+        bridgeState.group.visible = false;
+      }
+
       i += 1;
     }
   },
@@ -1162,22 +1213,60 @@ Page({
 
       if (this.pendingPath.length) {
         this.startNextMove();
+      } else if (this.blockDataMap[this.playerBlockId].type === 3) {
+        this.startLevelClearSequence();
       }
     }
   },
 
-  updatePlayerIdle(now) {
-    const elapsed = (now - this.timeStart) / 1000;
-
-    if (this.playerUseFallback && this.fallbackPlayer && this.fallbackPlayer.userData) {
-      const breath = 1 + Math.sin(elapsed * 3.2) * 0.035;
-      this.fallbackPlayer.userData.body.scale.y = breath;
-      this.fallbackPlayer.userData.head.position.y = 0.86 + Math.sin(elapsed * 3.2) * 0.04;
-      this.fallbackPlayer.userData.backpack.position.y = 0.42 + Math.sin(elapsed * 3.2) * 0.02;
+  startLevelClearSequence() {
+    if (this.levelClearState) {
+      return;
     }
 
-    if (this.playerMixer) {
-      this.playerMixer.update(1 / 60);
+    this.pendingPath = [];
+    this.levelClearState = {
+      startTime: Date.now(),
+      duration: LEVEL_CLEAR_DURATION,
+      logged: false,
+    };
+
+    console.log('Level Cleared');
+    if (wx && wx.showToast) {
+      wx.showToast({
+        title: 'Level Cleared',
+        icon: 'none',
+        duration: 1600,
+      });
+    }
+  },
+
+  updatePlayerAvatar(now) {
+    const elapsed = (now - this.timeStart) / 1000;
+    const walker = this.fallbackPlayer;
+    if (!walker) {
+      return;
+    }
+
+    if (this.activeMove) {
+      const walkWave = Math.sin(elapsed * 12);
+      walker.armLeft.rotation.x = walkWave * 0.6;
+      walker.armRight.rotation.x = -walkWave * 0.6;
+      walker.legLeft.rotation.x = -walkWave * 0.65;
+      walker.legRight.rotation.x = walkWave * 0.65;
+      walker.body.position.y = 0.42 + Math.abs(walkWave) * 0.05;
+      walker.head.position.y = 0.86 + Math.abs(walkWave) * 0.03;
+      walker.backpack.position.y = 0.42 + Math.abs(walkWave) * 0.02;
+    } else {
+      const breath = 1 + Math.sin(elapsed * 3.2) * 0.035;
+      walker.body.scale.y = breath;
+      walker.armLeft.rotation.x = Math.sin(elapsed * 3.2) * 0.08;
+      walker.armRight.rotation.x = -Math.sin(elapsed * 3.2) * 0.08;
+      walker.legLeft.rotation.x = 0;
+      walker.legRight.rotation.x = 0;
+      walker.body.position.y = 0.42;
+      walker.head.position.y = 0.86 + Math.sin(elapsed * 3.2) * 0.04;
+      walker.backpack.position.y = 0.42 + Math.sin(elapsed * 3.2) * 0.02;
     }
 
     if (now < this.blockedUntil) {
@@ -1199,6 +1288,30 @@ Page({
     const targetX = this.playerContainer.position.x;
     const targetY = this.playerContainer.position.y + 0.95;
     const targetZ = this.playerContainer.position.z;
+
+    if (this.levelClearState) {
+      const progress = clamp(
+        (Date.now() - this.levelClearState.startTime) / this.levelClearState.duration,
+        0,
+        1
+      );
+      const angle = progress * Math.PI * 1.3;
+      const radius = lerp(14, 22, easeOutCubic(progress));
+      const height = lerp(11, 17, easeOutCubic(progress));
+      this.cameraDesired.set(
+        targetX + Math.cos(angle) * radius,
+        targetY + height,
+        targetZ + Math.sin(angle) * radius
+      );
+      this.cameraLookAt.lerp(new this.THREE.Vector3(targetX, targetY + 0.8, targetZ), forceSnap ? 1 : 0.08);
+      if (forceSnap) {
+        this.camera.position.copy(this.cameraDesired);
+      } else {
+        this.camera.position.lerp(this.cameraDesired, 0.06);
+      }
+      this.camera.lookAt(this.cameraLookAt);
+      return;
+    }
 
     this.cameraDesired.set(
       targetX + CAMERA_OFFSET.x,
@@ -1226,7 +1339,7 @@ Page({
     this.updatePlayerMovement(now);
     this.updateMechanismAnimations(now);
     this.updateBridgeAnimations(now);
-    this.updatePlayerIdle(now);
+    this.updatePlayerAvatar(now);
     this.updateCamera(false);
 
     this.renderer.render(this.scene, this.camera);
