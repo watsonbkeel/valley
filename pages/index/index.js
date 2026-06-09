@@ -345,6 +345,7 @@ Page({
       beam: null,
       railA: null,
       railB: null,
+      hitSlab: null,
       currentScale: 0.001,
       startScale: 0.001,
       targetScale: 0.001,
@@ -723,18 +724,59 @@ Page({
     const railB = railA.clone();
     railB.position.x = 0.42;
 
+    group.userData = {
+      bridgePathKey: bridgePath.key,
+      isBridgeHitArea: true,
+      root: group,
+    };
+    beam.userData = {
+      bridgePathKey: bridgePath.key,
+      isBridgeHitArea: true,
+      root: group,
+    };
+    railA.userData = {
+      bridgePathKey: bridgePath.key,
+      isBridgeHitArea: true,
+      root: group,
+    };
+    railB.userData = {
+      bridgePathKey: bridgePath.key,
+      isBridgeHitArea: true,
+      root: group,
+    };
+
+    const hitSlab = new THREE.Mesh(
+      new THREE.BoxGeometry(1.55, 0.84, length + 0.34),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })
+    );
+    hitSlab.position.y = 0.2;
+    hitSlab.scale.z = 0.001;
+    hitSlab.userData = {
+      bridgePathKey: bridgePath.key,
+      isBridgeHitArea: true,
+      root: hitSlab,
+    };
+
     group.add(beam);
     group.add(railA);
     group.add(railB);
+    group.add(hitSlab);
     group.visible = false;
 
     bridgePath.group = group;
     bridgePath.beam = beam;
     bridgePath.railA = railA;
     bridgePath.railB = railB;
+    bridgePath.hitSlab = hitSlab;
 
     this.scene.add(group);
     this.sceneObjects.push(group);
+    this.interactiveRoots.push(group);
   },
 
   assignUserDataRecursive(object, root) {
@@ -805,16 +847,17 @@ Page({
 
     if (mesh) {
       mesh.visible = active || !immediate;
+      if (active) {
+        mesh.scale.set(1, 1, 1);
+      }
       if (immediate) {
-        mesh.scale.set(1, 1, active ? 1 : 0.001);
+        mesh.scale.set(1, 1, 1);
         mesh.visible = active;
       }
     }
     if (collider) {
       collider.visible = active;
-      if (immediate) {
-        collider.scale.set(1, 1, active ? 1 : 0.001);
-      }
+      collider.scale.set(1, 1, 1);
     }
   },
 
@@ -859,7 +902,7 @@ Page({
       return;
     }
 
-    const target = this.resolveInteractiveRoot(hits[0].object);
+    const target = this.resolveInteractiveTarget(hits[0]);
     if (!target || !target.userData) {
       return;
     }
@@ -888,6 +931,30 @@ Page({
     }
   },
 
+  resolveInteractiveTarget(hit) {
+    let current = hit.object;
+    while (current) {
+      if (current.userData && current.userData.bridgePathKey) {
+        const blockId = this.resolveBridgeHitBlockId(current.userData.bridgePathKey, hit.point);
+        if (!blockId) {
+          return null;
+        }
+        const block = this.blockDataMap[blockId];
+        return {
+          userData: {
+            blockId,
+            type: block ? block.type : 5,
+            mechanismId: block ? block.mechanismId || '' : '',
+            isBridge: true,
+          },
+        };
+      }
+      current = current.parent;
+    }
+
+    return this.resolveInteractiveRoot(hit.object);
+  },
+
   resolveInteractiveRoot(object) {
     let current = object;
     while (current) {
@@ -897,6 +964,34 @@ Page({
       current = current.parent;
     }
     return null;
+  },
+
+  resolveBridgeHitBlockId(bridgePathKey, worldPoint) {
+    const bridgePath = this.bridgePathMap[bridgePathKey];
+    if (!bridgePath || !bridgePath.nodeIds.length) {
+      return '';
+    }
+
+    let bestId = '';
+    let bestDistance = Infinity;
+    let i = 0;
+    while (i < bridgePath.nodeIds.length) {
+      const nodeId = bridgePath.nodeIds[i];
+      if (this.isBlockActive(nodeId)) {
+        const nodePosition = this.getWorldPositionForBlock(this.blockDataMap[nodeId]);
+        const dx = nodePosition.x - worldPoint.x;
+        const dy = nodePosition.y - worldPoint.y;
+        const dz = nodePosition.z - worldPoint.z;
+        const distance = dx * dx + dy * dy * 0.25 + dz * dz;
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestId = nodeId;
+        }
+      }
+      i += 1;
+    }
+
+    return bestId;
   },
 
   canOperateMechanism(mechanismBlockId) {
@@ -1095,6 +1190,105 @@ Page({
       }
       i += 1;
     }
+
+    this.addPlayerIslandEscapeLinks();
+  },
+
+  addPlayerIslandEscapeLinks() {
+    const playerBlock = this.blockDataMap[this.playerBlockId];
+    if (!playerBlock) {
+      return;
+    }
+
+    const island = this.collectNaturalIsland(this.playerBlockId);
+    let i = 0;
+    while (i < level.mechanisms.length) {
+      const mechanism = level.mechanisms[i];
+      const stateKeys = Object.keys(mechanism.linksByState || {});
+      let s = 0;
+      while (s < stateKeys.length) {
+        const links = mechanism.linksByState[stateKeys[s]] || [];
+        let j = 0;
+        while (j < links.length) {
+          const a = this.blockDataMap[links[j][0]];
+          const b = this.blockDataMap[links[j][1]];
+          if (a && b && this.shouldPreserveIslandEscape(a, b, island)) {
+            this.addActiveLink(a.id, b.id);
+          }
+          j += 1;
+        }
+        s += 1;
+      }
+      i += 1;
+    }
+  },
+
+  collectNaturalIsland(startId) {
+    const visited = {};
+    const queue = [startId];
+    visited[startId] = true;
+
+    while (queue.length) {
+      const currentId = queue.shift();
+      const current = this.blockDataMap[currentId];
+      if (!current) {
+        continue;
+      }
+
+      const neighbors = this.getNaturalNeighbors(current);
+      let i = 0;
+      while (i < neighbors.length) {
+        const neighbor = neighbors[i];
+        if (!visited[neighbor.id]) {
+          visited[neighbor.id] = true;
+          queue.push(neighbor.id);
+        }
+        i += 1;
+      }
+    }
+
+    return visited;
+  },
+
+  getNaturalNeighbors(block) {
+    const neighbors = [];
+    const directions = [
+      { x: 1, z: 0 },
+      { x: -1, z: 0 },
+      { x: 0, z: 1 },
+      { x: 0, z: -1 },
+    ];
+
+    let i = 0;
+    while (i < directions.length) {
+      const direction = directions[i];
+      const nextBlock = this.positionMap[makePositionKey(block.x + direction.x, block.z + direction.z)];
+      if (
+        nextBlock &&
+        this.isBlockActive(nextBlock.id) &&
+        !this.isMechanismControlledPair(block, nextBlock) &&
+        this.canWalkBetween(block, nextBlock)
+      ) {
+        neighbors.push(nextBlock);
+      }
+      i += 1;
+    }
+
+    return neighbors;
+  },
+
+  shouldPreserveIslandEscape(a, b, island) {
+    if (a.isBridge || b.isBridge) {
+      return false;
+    }
+
+    if (a.type === 2 && b.deadEnd && island[b.id]) {
+      return true;
+    }
+    if (b.type === 2 && a.deadEnd && island[a.id]) {
+      return true;
+    }
+    return false;
   },
 
   activateMechanismPair(fromId, toId, immediate) {
@@ -1164,6 +1358,10 @@ Page({
     if (bridgePath.railB) {
       bridgePath.railB.scale.z = scaleZ;
     }
+    if (bridgePath.hitSlab) {
+      bridgePath.hitSlab.scale.z = scaleZ;
+      bridgePath.hitSlab.visible = active;
+    }
 
     let i = 0;
     while (i < bridgePath.nodeIds.length) {
@@ -1171,14 +1369,14 @@ Page({
       const mesh = this.blockMeshes[nodeId];
       const collider = this.bridgeColliders[nodeId];
       if (mesh) {
-        mesh.scale.set(1, 1, scaleZ);
+        mesh.scale.set(1, 1, 1);
         mesh.visible = active || this.blockActiveState[nodeId];
         if (!active && !this.blockActiveState[nodeId]) {
           mesh.visible = false;
         }
       }
       if (collider) {
-        collider.scale.set(1, 1, scaleZ);
+        collider.scale.set(1, 1, 1);
         collider.visible = !!this.blockActiveState[nodeId];
       }
       i += 1;
