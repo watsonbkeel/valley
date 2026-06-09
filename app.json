@@ -1,0 +1,13 @@
+{
+  "pages": [
+    "pages/index/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "Valley",
+    "navigationBarBackgroundColor": "#f4f1ff",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f4f1ff",
+    "backgroundTextStyle": "light"
+  },
+  "style": "v2"
+}
