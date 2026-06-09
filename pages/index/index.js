@@ -42,40 +42,40 @@ const level = {
   startBlockId: 'start_0',
   goalBlockId: 'goal',
   blocks: [
-    { id: 'start_0', x: 18, y: 0, z: 25, type: 1 },
-    { id: 'start_1', x: 19, y: 0, z: 25, type: 1 },
-    { id: 'start_2', x: 20, y: 0, z: 25, type: 1 },
-    { id: 'm1_west', x: 21, y: 0, z: 25, type: 1 },
-    { id: 'm1_center', x: 22, y: 0, z: 25, type: 2, mechanismId: 'm1' },
-    { id: 'm1_east', x: 23, y: 0.5, z: 25, type: 4 },
-    { id: 'm1_north_dead', x: 22, y: 0.5, z: 24, type: 4, deadEnd: true },
-    { id: 'm1_north_tower', x: 22, y: 1, z: 23, type: 1, deadEnd: true },
-    { id: 'm1_north_roof', x: 23, y: 1.5, z: 23, type: 4, deadEnd: true },
-    { id: 'm1_south_dead', x: 22, y: 0, z: 26, type: 1, deadEnd: true },
-    { id: 'm1_south_gap', x: 22, y: 0, z: 27, type: 1, deadEnd: true },
+    { id: 'start_0', x: 14, y: 0, z: 25, type: 1 },
+    { id: 'start_1', x: 15, y: 0, z: 25, type: 1 },
+    { id: 'start_2', x: 16, y: 0, z: 25, type: 1 },
+    { id: 'm1_west', x: 17, y: 0, z: 25, type: 1 },
+    { id: 'm1_center', x: 21, y: 0, z: 25, type: 2, mechanismId: 'm1' },
+    { id: 'm1_east', x: 25, y: 0.5, z: 25, type: 4 },
+    { id: 'm1_north_dead', x: 21, y: 0.5, z: 24, type: 4, deadEnd: true },
+    { id: 'm1_north_tower', x: 21, y: 1, z: 23, type: 1, deadEnd: true },
+    { id: 'm1_north_roof', x: 22, y: 1.5, z: 23, type: 4, deadEnd: true },
+    { id: 'm1_south_dead', x: 21, y: 0, z: 26, type: 1, deadEnd: true },
+    { id: 'm1_south_gap', x: 21, y: 0, z: 27, type: 1, deadEnd: true },
 
-    { id: 'mid_0', x: 24, y: 0.5, z: 25, type: 1 },
-    { id: 'mid_1', x: 25, y: 1, z: 25, type: 4 },
-    { id: 'mid_2', x: 26, y: 1, z: 25, type: 1 },
-    { id: 'mid_overlook', x: 26, y: 1.5, z: 24, type: 4, deadEnd: true },
-    { id: 'mid_overlook_top', x: 26, y: 2, z: 23, type: 1, deadEnd: true },
-    { id: 'm2_west', x: 27, y: 1, z: 25, type: 1 },
-    { id: 'm2_center', x: 28, y: 1, z: 25, type: 2, mechanismId: 'm2' },
-    { id: 'm2_north_dead', x: 28, y: 1.5, z: 24, type: 4, deadEnd: true },
-    { id: 'm2_north_top', x: 28, y: 2, z: 23, type: 1, deadEnd: true },
-    { id: 'm2_south_dead', x: 28, y: 1, z: 26, type: 1, deadEnd: true },
-    { id: 'm2_south_pit', x: 28, y: 0.5, z: 27, type: 4, deadEnd: true },
-    { id: 'm2_south_low', x: 28, y: 0, z: 28, type: 1, deadEnd: true },
+    { id: 'mid_0', x: 26, y: 0.5, z: 25, type: 1 },
+    { id: 'mid_1', x: 27, y: 1, z: 25, type: 4 },
+    { id: 'mid_2', x: 28, y: 1, z: 25, type: 1 },
+    { id: 'mid_overlook', x: 28, y: 1.5, z: 24, type: 4, deadEnd: true },
+    { id: 'mid_overlook_top', x: 28, y: 2, z: 23, type: 1, deadEnd: true },
+    { id: 'm2_west', x: 29, y: 1, z: 25, type: 1 },
+    { id: 'm2_center', x: 30, y: 1, z: 25, type: 2, mechanismId: 'm2' },
+    { id: 'm2_north_dead', x: 30, y: 1.5, z: 24, type: 4, deadEnd: true },
+    { id: 'm2_north_top', x: 30, y: 2, z: 23, type: 1, deadEnd: true },
+    { id: 'm2_south_dead', x: 30, y: 1, z: 26, type: 1, deadEnd: true },
+    { id: 'm2_south_pit', x: 30, y: 0.5, z: 27, type: 4, deadEnd: true },
+    { id: 'm2_south_low', x: 30, y: 0, z: 28, type: 1, deadEnd: true },
 
-    { id: 'bridge_exit', x: 32, y: 2, z: 25, type: 4 },
-    { id: 'goal_ramp_0', x: 33, y: 2, z: 25, type: 1 },
-    { id: 'goal_ramp_1', x: 34, y: 2.5, z: 25, type: 4 },
-    { id: 'goal', x: 35, y: 3, z: 25, type: 3 },
+    { id: 'bridge_exit', x: 34, y: 2, z: 25, type: 4 },
+    { id: 'goal_ramp_0', x: 35, y: 2, z: 25, type: 1 },
+    { id: 'goal_ramp_1', x: 36, y: 2.5, z: 25, type: 4 },
+    { id: 'goal', x: 37, y: 3, z: 25, type: 3 },
 
-    { id: 'side_loop_0', x: 24, y: 0.5, z: 26, type: 1, deadEnd: true },
-    { id: 'side_loop_1', x: 25, y: 0.5, z: 26, type: 1, deadEnd: true },
-    { id: 'side_loop_2', x: 26, y: 0.5, z: 26, type: 1, deadEnd: true },
-    { id: 'side_loop_drop', x: 27, y: 0, z: 26, type: 4, deadEnd: true },
+    { id: 'side_loop_0', x: 26, y: 0.5, z: 26, type: 1, deadEnd: true },
+    { id: 'side_loop_1', x: 27, y: 0.5, z: 26, type: 1, deadEnd: true },
+    { id: 'side_loop_2', x: 28, y: 0.5, z: 26, type: 1, deadEnd: true },
+    { id: 'side_loop_drop', x: 29, y: 0, z: 26, type: 4, deadEnd: true },
   ],
   mechanisms: [
     {
@@ -85,7 +85,7 @@ const level = {
       initialState: 0,
       centerBlockId: 'm1_center',
       linksByState: {
-        0: [['m1_center', 'm1_west']],
+        0: [],
         1: [
           ['m1_center', 'm1_west'],
           ['m1_center', 'm1_north_dead'],
@@ -665,7 +665,7 @@ Page({
     const THREE = this.THREE;
     const position = this.getWorldPositionForBlock(block);
     const collider = new THREE.Mesh(
-      new THREE.BoxGeometry(BLOCK_SIZE * 1.18, BLOCK_THICKNESS + 0.5, BLOCK_SIZE * 1.18),
+      new THREE.BoxGeometry(BLOCK_SIZE * 1.62, BLOCK_THICKNESS + 0.86, BLOCK_SIZE * 1.62),
       new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
@@ -673,7 +673,7 @@ Page({
         depthWrite: false,
       })
     );
-    collider.position.set(position.x, position.y, position.z);
+    collider.position.set(position.x, position.y + 0.08, position.z);
     collider.userData = {
       blockId: block.id,
       type: block.type,
@@ -901,19 +901,20 @@ Page({
 
   canOperateMechanism(mechanismBlockId) {
     if (this.playerBlockId === mechanismBlockId) {
-      return true;
-    }
-
-    const playerBlock = this.blockDataMap[this.playerBlockId];
-    const mechanismBlock = this.blockDataMap[mechanismBlockId];
-    if (!playerBlock || !mechanismBlock) {
       return false;
     }
 
-    const manhattan2D =
-      Math.abs(playerBlock.x - mechanismBlock.x) +
-      Math.abs(playerBlock.z - mechanismBlock.z);
-    return manhattan2D === 1 && Math.abs(playerBlock.y - mechanismBlock.y) <= 0.75;
+    const mechanismBlock = this.blockDataMap[mechanismBlockId];
+    const playerBlock = this.blockDataMap[this.playerBlockId];
+    if (!mechanismBlock || !playerBlock) {
+      return false;
+    }
+
+    if (playerBlock.isBridge && playerBlock.mechanismId === mechanismBlock.mechanismId) {
+      return false;
+    }
+
+    return true;
   },
 
   requestMoveToBlock(targetBlockId) {
