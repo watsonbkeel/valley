@@ -203,6 +203,7 @@ Page({
     this.mechanismStates = {};
     this.activeLinks = {};
     this.bridgeStates = [];
+    this.bridgeColliderMap = {};
     this.activeMove = null;
     this.pendingPath = [];
     this.activeMechanismAnimations = [];
@@ -425,6 +426,20 @@ Page({
     }
 
     i = 0;
+    while (i < ids.length) {
+      const block = this.blockDataMap[ids[i]];
+      if (block.isBridge) {
+        const collider = this.createBridgeCollider(block);
+        const colliderId = `${block.id}-collider`;
+        this.bridgeColliderMap[colliderId] = collider;
+        this.interactiveRoots.push(collider);
+        this.scene.add(collider);
+        this.sceneObjects.push(collider);
+      }
+      i += 1;
+    }
+
+    i = 0;
     while (i < level.mechanisms.length) {
       const mechanism = level.mechanisms[i];
       this.mechanismStates[mechanism.id] = {
@@ -594,12 +609,14 @@ Page({
       const stepZ = dz === 0 ? 0 : dz / Math.abs(dz);
       const nodeIds = [];
       const nodeGroups = [];
+      const colliderIds = [];
 
       let step = 1;
       while (step < length) {
         const nodeId = `${mechanism.id}-bridge-${linkIndex}-${step}`;
         nodeIds.push(nodeId);
         nodeGroups.push(this.blockMeshes[nodeId]);
+        colliderIds.push(`${nodeId}-collider`);
         step += 1;
       }
 
@@ -645,6 +662,7 @@ Page({
         toId: toBlock.id,
         nodeIds,
         nodeGroups,
+        colliderIds,
         group: bridgeGroup,
         beam,
         rail,
@@ -660,6 +678,31 @@ Page({
     }
 
     return states;
+  },
+
+  createBridgeCollider(block) {
+    const THREE = this.THREE;
+    const position = this.getWorldPositionForBlock(block);
+    const collider = new THREE.Mesh(
+      new THREE.BoxGeometry(BLOCK_SIZE * 1.08, BLOCK_THICKNESS + 0.42, BLOCK_SIZE * 1.08),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })
+    );
+    collider.position.set(position.x, position.y, position.z);
+    collider.userData = {
+      blockId: block.id,
+      type: block.type,
+      mechanismId: block.mechanismId || '',
+      isBridge: true,
+      isBridgeCollider: true,
+      root: collider,
+    };
+    collider.visible = false;
+    return collider;
   },
 
   createPlayerContainer() {
@@ -783,6 +826,8 @@ Page({
     } else if (immediate) {
       group.visible = false;
       group.scale.set(1, 1, 0.001);
+    } else {
+      group.scale.set(1, 1, Math.max(group.scale.z, 0.001));
     }
   },
 
@@ -1148,6 +1193,16 @@ Page({
         nodeIndex += 1;
       }
 
+      nodeIndex = 0;
+      while (nodeIndex < bridgeState.colliderIds.length) {
+        const collider = this.bridgeColliderMap[bridgeState.colliderIds[nodeIndex]];
+        if (collider) {
+          collider.visible = bridgeState.targetScale > 0.001 || bridgeState.animating;
+          collider.scale.set(1, 1, scaleZ);
+        }
+        nodeIndex += 1;
+      }
+
       if (!bridgeState.animating && bridgeState.targetScale <= 0.001) {
         bridgeState.group.visible = false;
       }
@@ -1214,12 +1269,12 @@ Page({
       if (this.pendingPath.length) {
         this.startNextMove();
       } else if (this.blockDataMap[this.playerBlockId].type === 3) {
-        this.startLevelClearSequence();
+        this.advanceLevel();
       }
     }
   },
 
-  startLevelClearSequence() {
+  advanceLevel() {
     if (this.levelClearState) {
       return;
     }
@@ -1229,6 +1284,7 @@ Page({
       startTime: Date.now(),
       duration: LEVEL_CLEAR_DURATION,
       logged: false,
+      modalShown: false,
     };
 
     console.log('Level Cleared');
@@ -1239,6 +1295,55 @@ Page({
         duration: 1600,
       });
     }
+  },
+
+  showLevelClearModal() {
+    if (!wx || !wx.showModal) {
+      return;
+    }
+
+    wx.showModal({
+      title: '恭喜通关',
+      content: '长桥已经打通。是否重置回起点，再走一遍这条路线？',
+      confirmText: '回到起点',
+      cancelText: '留在终点',
+      success: (res) => {
+        if (res.confirm) {
+          this.resetLevelToStart();
+        } else {
+          this.levelClearState = null;
+          this.updateCamera(true);
+        }
+      },
+    });
+  },
+
+  resetLevelToStart() {
+    this.pendingPath = [];
+    this.activeMove = null;
+    this.activeMechanismAnimations = [];
+    this.blockedUntil = 0;
+    this.levelClearState = null;
+
+    const mechanismIds = Object.keys(this.mechanismStates);
+    let i = 0;
+    while (i < mechanismIds.length) {
+      const mechanismId = mechanismIds[i];
+      this.mechanismStates[mechanismId].rotationState = 0;
+      const mesh = this.mechanismMeshes[mechanismId];
+      if (mesh) {
+        mesh.rotation.y = 0;
+      }
+      i += 1;
+    }
+
+    this.rebuildMechanismLinks();
+    this.playerBlockId = level.startBlockId;
+    this.placePlayerAtBlock(this.playerBlockId);
+    this.playerContainer.rotation.set(0, 0, 0);
+    this.playerAvatarRoot.rotation.set(0, 0, 0);
+    this.playerAvatarRoot.scale.set(1, 1, 1);
+    this.updateCamera(true);
   },
 
   updatePlayerAvatar(now) {
@@ -1295,7 +1400,7 @@ Page({
         0,
         1
       );
-      const angle = progress * Math.PI * 1.3;
+      const angle = progress * Math.PI * 2;
       const radius = lerp(14, 22, easeOutCubic(progress));
       const height = lerp(11, 17, easeOutCubic(progress));
       this.cameraDesired.set(
@@ -1310,6 +1415,11 @@ Page({
         this.camera.position.lerp(this.cameraDesired, 0.06);
       }
       this.camera.lookAt(this.cameraLookAt);
+
+      if (progress >= 1 && !this.levelClearState.modalShown) {
+        this.levelClearState.modalShown = true;
+        this.showLevelClearModal();
+      }
       return;
     }
 
