@@ -156,9 +156,6 @@ Page({
 
   onUnload() {
     this.isUnloading = true;
-    if (this.canvas && this.handleTouch && this.canvas.removeEventListener) {
-      this.canvas.removeEventListener('touchstart', this.handleTouch);
-    }
     if (this.rafId != null && this.canvas && this.canvas.cancelAnimationFrame) {
       this.canvas.cancelAnimationFrame(this.rafId);
     }
@@ -240,7 +237,6 @@ Page({
 
       this.addSceneDecorations();
       this.buildLevel(this.currentLevelIndex);
-      this.bindTouchEvents();
       this.renderLoop();
     });
   },
@@ -272,22 +268,14 @@ Page({
     this.scene.add(shadowPlane);
   },
 
-  bindTouchEvents() {
-    if (!this.canvas || !this.canvas.addEventListener) {
+  onTouchStart(event) {
+    const touch =
+      (event.touches && event.touches[0]) ||
+      (event.changedTouches && event.changedTouches[0]);
+    if (!touch) {
       return;
     }
-
-    this.handleTouch = (event) => {
-      const touch =
-        (event.changedTouches && event.changedTouches[0]) ||
-        (event.touches && event.touches[0]);
-      if (!touch) {
-        return;
-      }
-      this.processTap(touch);
-    };
-
-    this.canvas.addEventListener('touchstart', this.handleTouch);
+    this.processTap(touch);
   },
 
   processTap(touch) {
