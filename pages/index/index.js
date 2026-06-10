@@ -15,6 +15,14 @@ const LEVEL_CLEAR_DURATION = 3400;
 const CAMERA_LERP = 0.085;
 const CAMERA_OFFSET = { x: 8.8, y: 9.8, z: 8.8 };
 
+const BLOCK_TYPE = {
+  PATH: 1,
+  MECHANISM: 2,
+  GOAL: 3,
+  STAIR: 4,
+  BRIDGE: 5,
+};
+
 const COLORS = {
   background: 0x2b2d42,
   fog: 0x343855,
@@ -82,7 +90,7 @@ const level = {
       id: 'm1',
       type: 'rotate',
       axis: 'y',
-      initialState: 0,
+      initialState: 1,
       centerBlockId: 'm1_center',
       linksByState: {
         0: [],
@@ -207,6 +215,7 @@ Page({
     this.pointer = null;
     this.cameraLookAt = null;
     this.cameraDesired = null;
+    this.tempVector3 = null;
 
     this.interactiveRoots = [];
     this.sceneObjects = [];
@@ -248,20 +257,16 @@ Page({
   },
 
   prepareLevelData() {
-    let i = 0;
-    while (i < level.blocks.length) {
+    for (let i = 0; i < level.blocks.length; i++) {
       const block = Object.assign({}, level.blocks[i], {
         isBridge: false,
         isRuntime: false,
       });
       this.registerBlock(block, true);
-      i += 1;
     }
 
-    i = 0;
-    while (i < level.mechanisms.length) {
+    for (let i = 0; i < level.mechanisms.length; i++) {
       this.createRuntimeBridgeNodes(level.mechanisms[i]);
-      i += 1;
     }
   },
 
@@ -274,11 +279,9 @@ Page({
   createRuntimeBridgeNodes(mechanism) {
     const seenPairs = {};
     const stateKeys = Object.keys(mechanism.linksByState || {});
-    let s = 0;
-    while (s < stateKeys.length) {
+    for (let s = 0; s < stateKeys.length; s++) {
       const pairs = mechanism.linksByState[stateKeys[s]] || [];
-      let p = 0;
-      while (p < pairs.length) {
+      for (let p = 0; p < pairs.length; p++) {
         const fromId = pairs[p][0];
         const toId = pairs[p][1];
         const pairKey = makePairKey(fromId, toId);
@@ -286,9 +289,7 @@ Page({
           seenPairs[pairKey] = true;
           this.createBridgePathIfNeeded(mechanism.id, fromId, toId);
         }
-        p += 1;
       }
-      s += 1;
     }
   },
 
@@ -408,6 +409,7 @@ Page({
       this.pointer = new THREE.Vector2();
       this.cameraLookAt = new THREE.Vector3();
       this.cameraDesired = new THREE.Vector3();
+      this.tempVector3 = new THREE.Vector3();
 
       this.addSceneDecorations();
       this.buildLevelGeometry();
@@ -448,20 +450,17 @@ Page({
 
   buildLevelGeometry() {
     const ids = Object.keys(this.blockDataMap);
-    let i = 0;
 
-    while (i < ids.length) {
+    for (let i = 0; i < ids.length; i++) {
       const block = this.blockDataMap[ids[i]];
       const group = this.createBlockGroup(block);
       this.blockMeshes[block.id] = group;
       this.interactiveRoots.push(group);
       this.scene.add(group);
       this.sceneObjects.push(group);
-      i += 1;
     }
 
-    i = 0;
-    while (i < ids.length) {
+    for (let i = 0; i < ids.length; i++) {
       const block = this.blockDataMap[ids[i]];
       if (block.isBridge) {
         const collider = this.createBridgeCollider(block);
@@ -470,17 +469,13 @@ Page({
         this.scene.add(collider);
         this.sceneObjects.push(collider);
       }
-      i += 1;
     }
 
-    i = 0;
-    while (i < this.bridgePaths.length) {
+    for (let i = 0; i < this.bridgePaths.length; i++) {
       this.createBridgeVisual(this.bridgePaths[i]);
-      i += 1;
     }
 
-    i = 0;
-    while (i < level.mechanisms.length) {
+    for (let i = 0; i < level.mechanisms.length; i++) {
       const mechanism = level.mechanisms[i];
       this.mechanismStates[mechanism.id] = {
         rotationState: mechanism.initialState || 0,
@@ -489,19 +484,16 @@ Page({
       if (mesh) {
         mesh.rotation.y = (mechanism.initialState || 0) * Math.PI / 2;
       }
-      i += 1;
     }
 
     this.rebuildMechanismLinks(true);
   },
 
   clearSceneObjects() {
-    let i = 0;
-    while (i < this.sceneObjects.length) {
+    for (let i = 0; i < this.sceneObjects.length; i++) {
       const object = this.sceneObjects[i];
       this.scene.remove(object);
       this.disposeObject3D(object);
-      i += 1;
     }
     this.sceneObjects = [];
   },
@@ -512,22 +504,18 @@ Page({
     }
     if (object.material) {
       if (Array.isArray(object.material)) {
-        let i = 0;
-        while (i < object.material.length) {
+        for (let i = 0; i < object.material.length; i++) {
           if (object.material[i] && object.material[i].dispose) {
             object.material[i].dispose();
           }
-          i += 1;
         }
       } else if (object.material.dispose) {
         object.material.dispose();
       }
     }
     if (object.children && object.children.length) {
-      let i = 0;
-      while (i < object.children.length) {
+      for (let i = 0; i < object.children.length; i++) {
         this.disposeObject3D(object.children[i]);
-        i += 1;
       }
     }
   },
@@ -571,20 +559,20 @@ Page({
       group.add(marker);
     }
 
-    if (block.type === 4) {
+    if (block.type === BLOCK_TYPE.STAIR) {
       this.addStairDetails(group, topY);
     }
 
-    if (block.type === 2) {
+    if (block.type === BLOCK_TYPE.MECHANISM) {
       this.addMechanismDetails(group, topY, block);
       this.mechanismMeshes[block.mechanismId] = group;
     }
 
-    if (block.type === 3) {
+    if (block.type === BLOCK_TYPE.GOAL) {
       this.addGoalDetails(group, topY);
     }
 
-    if (block.type === 5) {
+    if (block.type === BLOCK_TYPE.BRIDGE) {
       this.addBridgeNodeDetails(group, topY);
     }
 
@@ -791,16 +779,16 @@ Page({
   },
 
   getBlockColor(block) {
-    if (block.type === 2) {
+    if (block.type === BLOCK_TYPE.MECHANISM) {
       return COLORS.mechanism;
     }
-    if (block.type === 3) {
+    if (block.type === BLOCK_TYPE.GOAL) {
       return COLORS.goal;
     }
-    if (block.type === 4) {
+    if (block.type === BLOCK_TYPE.STAIR) {
       return COLORS.stair;
     }
-    if (block.type === 5) {
+    if (block.type === BLOCK_TYPE.BRIDGE) {
       return COLORS.bridge;
     }
     if (block.deadEnd) {
@@ -810,16 +798,16 @@ Page({
   },
 
   getBlockAccentColor(block) {
-    if (block.type === 2) {
+    if (block.type === BLOCK_TYPE.MECHANISM) {
       return COLORS.mechanismAccent;
     }
-    if (block.type === 3) {
+    if (block.type === BLOCK_TYPE.GOAL) {
       return COLORS.goalAccent;
     }
-    if (block.type === 4) {
+    if (block.type === BLOCK_TYPE.STAIR) {
       return COLORS.stairAccent;
     }
-    if (block.type === 5) {
+    if (block.type === BLOCK_TYPE.BRIDGE) {
       return COLORS.bridgeAccent;
     }
     if (block.deadEnd) {
@@ -917,7 +905,7 @@ Page({
       return;
     }
 
-    if (block.type === 2) {
+    if (block.type === BLOCK_TYPE.MECHANISM) {
       if (!this.canOperateMechanism(block.id)) {
         this.blockedUntil = Date.now() + BLOCKED_FEEDBACK_DURATION;
         return;
@@ -926,7 +914,7 @@ Page({
       return;
     }
 
-    if (block.type === 1 || block.type === 3 || block.type === 4 || block.type === 5) {
+    if (block.type === BLOCK_TYPE.PATH || block.type === BLOCK_TYPE.GOAL || block.type === BLOCK_TYPE.STAIR || block.type === BLOCK_TYPE.BRIDGE) {
       this.requestMoveToBlock(block.id);
     }
   },
@@ -943,7 +931,7 @@ Page({
         return {
           userData: {
             blockId,
-            type: block ? block.type : 5,
+            type: block ? block.type : BLOCK_TYPE.BRIDGE,
             mechanismId: block ? block.mechanismId || '' : '',
             isBridge: true,
           },
@@ -1009,6 +997,12 @@ Page({
       return false;
     }
 
+    // 必须站在机关的相邻格子才能操作（符合README说明）
+    const neighbors = this.getNeighbors(this.playerBlockId);
+    if (neighbors.indexOf(mechanismBlockId) === -1) {
+      return false;
+    }
+
     return true;
   },
 
@@ -1043,7 +1037,7 @@ Page({
     fScore[startId] = heuristic(startBlock, goalBlock);
 
     while (openSet.length) {
-      openSet.sort((a, b) => fScore[a] - fScore[b]);
+      // 取出 fScore 最小的节点（openSet 已按 fScore 排序）
       const currentId = openSet.shift();
       if (currentId === goalId) {
         return this.reconstructPath(cameFrom, currentId);
@@ -1063,10 +1057,27 @@ Page({
         if (gScore[neighborId] === undefined || tentativeScore < gScore[neighborId]) {
           cameFrom[neighborId] = currentId;
           gScore[neighborId] = tentativeScore;
-          fScore[neighborId] = tentativeScore + heuristic(this.blockDataMap[neighborId], goalBlock);
-          if (openSet.indexOf(neighborId) === -1) {
-            openSet.push(neighborId);
+          const newFScore = tentativeScore + heuristic(this.blockDataMap[neighborId], goalBlock);
+          fScore[neighborId] = newFScore;
+
+          // 如果已在 openSet 中，先移除
+          const existingIndex = openSet.indexOf(neighborId);
+          if (existingIndex !== -1) {
+            openSet.splice(existingIndex, 1);
           }
+
+          // 二分插入，保持 openSet 按 fScore 升序排列
+          let left = 0;
+          let right = openSet.length;
+          while (left < right) {
+            const mid = Math.floor((left + right) / 2);
+            if (fScore[openSet[mid]] < newFScore) {
+              left = mid + 1;
+            } else {
+              right = mid;
+            }
+          }
+          openSet.splice(left, 0, neighborId);
         }
         i += 1;
       }
@@ -1133,7 +1144,7 @@ Page({
   },
 
   isMechanismControlledPair(a, b) {
-    return a.type === 2 || b.type === 2 || a.type === 5 || b.type === 5;
+    return a.type === BLOCK_TYPE.MECHANISM || b.type === BLOCK_TYPE.MECHANISM || a.type === BLOCK_TYPE.BRIDGE || b.type === BLOCK_TYPE.BRIDGE;
   },
 
   canWalkBetween(fromBlock, toBlock) {
@@ -1143,7 +1154,7 @@ Page({
     }
 
     const heightDiff = Math.abs(fromBlock.y - toBlock.y);
-    if (fromBlock.type === 4 || toBlock.type === 4) {
+    if (fromBlock.type === BLOCK_TYPE.STAIR || toBlock.type === BLOCK_TYPE.STAIR) {
       return heightDiff <= 1;
     }
     return heightDiff <= 0.5;
@@ -1282,10 +1293,10 @@ Page({
       return false;
     }
 
-    if (a.type === 2 && b.deadEnd && island[b.id]) {
+    if (a.type === BLOCK_TYPE.MECHANISM && b.deadEnd && island[b.id]) {
       return true;
     }
-    if (b.type === 2 && a.deadEnd && island[a.id]) {
+    if (b.type === BLOCK_TYPE.MECHANISM && a.deadEnd && island[a.id]) {
       return true;
     }
     return false;
@@ -1519,7 +1530,7 @@ Page({
 
       if (this.pendingPath.length) {
         this.startNextMove();
-      } else if (this.blockDataMap[this.playerBlockId].type === 3) {
+      } else if (this.blockDataMap[this.playerBlockId].type === BLOCK_TYPE.GOAL) {
         this.startLevelClear();
       }
     }
@@ -1565,8 +1576,7 @@ Page({
     this.blockedUntil = 0;
     this.levelClearState = null;
 
-    let i = 0;
-    while (i < level.mechanisms.length) {
+    for (let i = 0; i < level.mechanisms.length; i++) {
       const mechanism = level.mechanisms[i];
       const initialState = mechanism.initialState || 0;
       this.mechanismStates[mechanism.id].rotationState = initialState;
@@ -1575,7 +1585,6 @@ Page({
         mesh.rotation.y = initialState * Math.PI / 2;
         mesh.position.y = 0;
       }
-      i += 1;
     }
 
     this.rebuildMechanismLinks(true);
@@ -1769,7 +1778,8 @@ Page({
         this.cameraLookAt.set(targetX, targetY + 0.8, targetZ);
       } else {
         this.camera.position.lerp(this.cameraDesired, 0.065);
-        this.cameraLookAt.lerp(new this.THREE.Vector3(targetX, targetY + 0.8, targetZ), 0.09);
+        this.tempVector3.set(targetX, targetY + 0.8, targetZ);
+        this.cameraLookAt.lerp(this.tempVector3, 0.09);
       }
       this.camera.lookAt(this.cameraLookAt);
 
@@ -1791,7 +1801,8 @@ Page({
       this.cameraLookAt.set(targetX, targetY, targetZ);
     } else {
       this.camera.position.lerp(this.cameraDesired, CAMERA_LERP);
-      this.cameraLookAt.lerp(new this.THREE.Vector3(targetX, targetY, targetZ), CAMERA_LERP);
+      this.tempVector3.set(targetX, targetY, targetZ);
+      this.cameraLookAt.lerp(this.tempVector3, CAMERA_LERP);
     }
 
     this.camera.lookAt(this.cameraLookAt);
